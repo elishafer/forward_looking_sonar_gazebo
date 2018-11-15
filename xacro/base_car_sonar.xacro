@@ -68,7 +68,7 @@
     </link>
 
     <joint name="${namespace}/test_joint" type="revolute">
-      <origin xyz="0 0 3" rpy="0 ${pi/2} ${pi/2}"/>
+      <origin xyz="0 0 0.5" rpy="0 0 ${pi/2}"/>
       <parent link="${namespace}/base_link" />
       <child link="${namespace}/test_link" />
       <limit upper="0" lower="0" effort="0" velocity="0" />
