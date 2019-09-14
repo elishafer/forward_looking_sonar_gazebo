@@ -5,7 +5,8 @@ project(forward_looking_sonar_gazebo)
 find_package(catkin REQUIRED COMPONENTS roslint
   image_transport 
   roscpp 
-  sensor_msgs)
+  sensor_msgs
+  sonar_msgs)
 find_package(OpenCV REQUIRED)
 find_package(GAZEBO REQUIRED)
 find_package(Boost REQUIRED)
@@ -67,6 +68,10 @@ install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
   FILES_MATCHING PATTERN "*.hh"
   PATTERN "*~" EXCLUDE
+)
+
+install(DIRECTORY media launch test xacro
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
 if (CATKIN_ENABLE_TESTING)

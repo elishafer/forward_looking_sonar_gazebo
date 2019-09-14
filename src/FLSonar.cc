@@ -45,7 +45,8 @@ FLSonar::FLSonar(const std::string &_namePrefix, ScenePtr _scene,
     imageWidth(0),
     imageHeight(0),
     binCount(0),
-    beamCount(0)
+    beamCount(0),
+    bUpdated(false)
 {
 }
 
@@ -65,10 +66,16 @@ void FLSonar::Load(sdf::ElementPtr _sdf)
 
   this->SetVertFOV(_sdf->Get<double>("vfov"));
 
+  this->SetHorzFOV(_sdf->Get<double>("horizontal_fov"));
+
+  double aspectRatio = this->HorzFOV() / this->VertFOV();
+
   Ogre::Radian fov_now(this->vfov);
   this->camera->setFOVy(fov_now);
-  this->camera->setAspectRatio(1.0);
+  this->camera->setAspectRatio(aspectRatio);
   this->camera->setAutoAspectRatio(0);
+
+  this->SetHorzFOV(this->GetVertFOV() * aspectRatio);
 
 
 
@@ -309,6 +316,8 @@ void FLSonar::RenderImpl()
 
   double firstPassDur = firstPassTimer.GetElapsed().Double();
 
+  this->bUpdated = false;
+
   // gzwarn << firstPassDur << std::endl;
 }
 
@@ -319,15 +328,33 @@ double FLSonar::GetVertFOV() const
 }
 
 //////////////////////////////////////////////////
+double FLSonar::GetHorzFOV() const
+{
+  return this->HorzFOV();
+}
+
+//////////////////////////////////////////////////
 double FLSonar::VertFOV() const
 {
   return this->vfov;
 }
 
 //////////////////////////////////////////////////
+double FLSonar::HorzFOV() const
+{
+  return this->hfov;
+}
+
+//////////////////////////////////////////////////
 void FLSonar::SetVertFOV(const double _vfov)
 {
   this->vfov = _vfov;
+}
+
+//////////////////////////////////////////////////
+void FLSonar::SetHorzFOV(const double _hfov)
+{
+  this->hfov = _hfov;
 }
 
 
@@ -437,8 +464,6 @@ void FLSonar::SetBeamCount(const int &_value)
 bool FLSonar::SetProjectionType(const std::string &_type)
 {
   bool result = true;
-
-
   this->camera->setProjectionType(Ogre::PT_PERSPECTIVE);
   this->camera->setCustomProjectionMatrix(false);
   this->scene->SetShadowsEnabled(false);
@@ -456,6 +481,18 @@ void FLSonar::PreRender(const math::Pose &_pose)
 }
 
 //////////////////////////////////////////////////
+void FLSonar::UpdateData()
+{
+  if (!this->bUpdated)
+  {
+    this->ImageTextureToCV(this->imageWidth, this->imageHeight, this->camTexture);
+    this->accumData.assign(this->binCount * this->beamCount, 0.0);
+    this->CvToSonarBin(this->accumData);
+    this->bUpdated = true;
+  }
+}
+
+//////////////////////////////////////////////////
 void FLSonar::GetSonarImage()
 {
   int sonarImageWidth = this->imageWidth;
@@ -465,16 +502,12 @@ void FLSonar::GetSonarImage()
   this->sonarImageMask = cv::Mat::zeros(sonarImageWidth, sonarImageHeight, CV_8UC1);
 
 
-  this->ImageTextureToCV(this->imageWidth, this->imageHeight, this->camTexture);
-
   // this->DebugPrintImageChannelToFile("TesteBlue.dat", this->rawImage,0);
   // this->DebugPrintImageChannelToFile("TesteGreen.dat", this->rawImage,1);
 
-  std::vector<float> accumData;
-  accumData.assign(this->binCount * this->beamCount, 0.0);
-  this->CvToSonarBin(accumData);
+  this->UpdateData();
 
-  // this->DebugPrintMatrixToFile<float>("Teste2.dat", accumData);
+  // this->DebugPrintMatrixToFile<float>("Teste2.dat", this->accumData);
 
 
   std::vector<int> transferTable;
@@ -485,7 +518,7 @@ void FLSonar::GetSonarImage()
 
   // this->DebugPrintMatrixToFile<int>("Teste3.dat", transferTable);
 
-  this->TransferTableToSonar(accumData, transferTable);
+  this->TransferTableToSonar(this->accumData, transferTable);
 }
 
 //////////////////////////////////////////////////
@@ -524,9 +557,10 @@ void FLSonar::CvToSonarBin(std::vector<float> &_accumData)
       float intensity = (1.0 / this->sonarBinsDepth[bin_idx]) * this->Sigmoid(roi.at<cv::Vec3f>(xIndex, yIndex)[0]);
       this->bins[bin_idx] += intensity;
     }
-    int id_beam = static_cast<int>(((-this->vfov / 2 + i_beam * this->vfov
-      / this->beamCount + this->vfov / 2)
-      / (this->vfov)) * (this->beamCount));
+    int id_beam = static_cast<int>(((-this->HorzFOV() / 2 + i_beam * this->HorzFOV()
+      / this->beamCount + this->HorzFOV() / 2)
+      / (this->HorzFOV())) * (this->beamCount));
+
     for (size_t i = 0; i < this->binCount; ++i)
       _accumData[id_beam * this->binCount + i] = this->bins[i];
   }
@@ -563,19 +597,36 @@ void FLSonar::GenerateTransferTable(std::vector<int> &_transfer)
       double theta = atan2(point.x, -point.y);
 
       // pixels out the sonar image
-      if (radius > this->binCount || !radius || theta < -this->vfov / 2 || theta > this->vfov / 2)
+      if (radius > this->binCount || !radius || theta < -this->HorzFOV() / 2 || theta > this->HorzFOV() / 2)
         _transfer.push_back(-1);
 
       // pixels in the sonar image
       else
       {
         this->sonarImageMask.at<uchar>(j, i) = 255;
-        int idBeam = static_cast<int>(((theta + this->vfov / 2) / (this->vfov)) * (this->beamCount));
-        // int idBeam = static_cast<int>(((theta + M_PI) / (2 * M_PI)) * (this->beamCount - 1));
+        int idBeam = static_cast<int>(((theta + this->HorzFOV() / 2) / (this->HorzFOV())) * (this->beamCount));
         _transfer.push_back(idBeam * this->binCount + static_cast<float>(radius));
       }
     }
   }
+}
+
+//////////////////////////////////////////////////
+sonar_msgs::SonarStamped FLSonar::SonarRosMsg(const gazebo::physics::WorldPtr _world)
+{
+  this->UpdateData();
+
+  sonar_msgs::SonarStamped sonarOutput;
+  sonarOutput.header.stamp.sec = _world->GetSimTime().sec;
+  sonarOutput.header.stamp.nsec = _world->GetSimTime().nsec;
+  sonarOutput.num_bins = this->binCount;
+  sonarOutput.num_beams = this->beamCount;
+  sonarOutput.beams_width = this->HorzFOV();
+  sonarOutput.beam_height = this->VertFOV();
+  sonarOutput.bearings = 0;
+  sonarOutput.data = this->accumData;
+
+  return sonarOutput;
 }
 
 //////////////////////////////////////////////////
